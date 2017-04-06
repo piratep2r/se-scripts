@@ -1,0 +1,11 @@
+How the script submission process works:
+
+Suggested scripts go into the suggested scripts folder
+Here, everyone can see which scripts are suggested.
+Suggested scripts MUST be well documented so that it is easy for people to install them and test them and use them.
+
+The script moderators can then go through the suggested scripts, try them out, and discuss them.
+Only scripts where moderators have reached a majority consensus should be approved.
+
+If they are approved, then they will be moved into the approved scripts folder.
+Otherwise, the script is moved into the rejected scripts folder, so it is easy to keep track of what has been thrown out.
