@@ -1,7 +1,6 @@
 
 /*
 D4RK3 54B3R's flare sequencer, to be used with guided missiles mod.
-This script controls the firing of flares to try to fool or distract incoming guided missiles.
 
 How to setup for use:
 1. Programmable block with this script
@@ -19,11 +18,10 @@ This script can take one of two arguments:
 To stop the script, just run it again with the same argument you ran it with the first time.
 So if I pressed the button for run, with the arg "cont"... hitting that same button again will stop it.
 
-If the grid is modified, like if additional flares are added, then the script must be recompiled in order to use the new flares.
 */
 
 //Set this to however many flares you want to fire per second
-public const double flaresPerSecond = 6; 
+public const double flaresPerSecond = 8; 
 
 
 /* Don't touch anything below this */
@@ -103,7 +101,6 @@ void Main(string arg){
 		}else{
 			state = FlareState.Idle;
 			Echo("Flares Ready");
-			stopTimer();
 		}
 		
 		
@@ -111,6 +108,10 @@ void Main(string arg){
 		if(state != FlareState.Continuous){
 			state = FlareState.Continuous;
 			startTimer();
+			
+			if(counter < 0) counter = 0;
+			if(counter >= length) counter = 0;
+			
 			scriptTime = 0;
 			flareTimer = 0;
 			Echo("Flares Active");
@@ -118,8 +119,11 @@ void Main(string arg){
 		}else{
 			state = FlareState.Idle;
 			Echo("Flares Ready");
-			stopTimer();
 		}
+	}
+	
+	if(state == FlareState.Idle){
+		stopTimer();
 	}
 	
 	
