@@ -13,6 +13,8 @@ To set up the script for use, take the following steps.
 
 Now the script is ready to run. All you need to do now is make sure the timer is on, and press the "start" button on the timer block in the control panel.
 To stop the script, you can either turn off the timer block, or press the "Stop" button on the timer block in the control panel.
+Make sure to stop the script if you're not using the ship it belongs to! This will help (ever so slightly) with server performance.
+Also make sure to stop the script if the ship is docked. Again, this will help with server performance.
 
 
 If the script is writing to LCD screens that you don't want it to modify, you can make a quick and easy edit to the script to fix this.
