@@ -32,9 +32,8 @@ public const double flareDelay = 1 / flaresPerSecond;
 
 public FlareState state = FlareState.Idle;
 
-public string nameTag = "Flare";
-
 public bool isSetup = false;
+public string nameTag = "Flare";
 
 public int counter = 0;
 public int length = 0;
@@ -143,7 +142,9 @@ public void setup(){
 		if(block is IMyTimerBlock && myTimerBlock == null){
 			myTimerBlock = block as IMyTimerBlock;
 		}else if(block is IMySmallMissileLauncher){
-			flaresList.Add(block as IMySmallMissileLauncher);
+			if(block.CustomName.IndexOf(nameTag) >= 0){
+				flaresList.Add(block as IMySmallMissileLauncher);
+			}
 		}
 	}
 	
