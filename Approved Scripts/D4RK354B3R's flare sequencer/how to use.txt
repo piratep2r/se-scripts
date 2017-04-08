@@ -35,3 +35,6 @@ public const double flaresPerSecond = 8;
 
 and changing the line to instead read:
 public const double flaresPerSecond = 4; 
+
+
+Additionally, if you edit the ship to add or remove flare launchers, make sure to hit the "recompile" button for the programmable block under the control panel. This will make the script recognize the new changes made to the ship, and correctly cycle through new flares.
