@@ -49,11 +49,16 @@ void Main(string arg){
 	if(!isSetup){
 		setup();
 		
-		myTimerBlock.SetValue("TriggerDelay", (float)idleDelay);
-		myTimerBlock.ApplyAction("OnOff_On");
-		myTimerBlock.ApplyAction("Start");
-		
-		return;
+		if(isSetup){
+			//If setup was successful, begin running the script and checking for enemies
+			myTimerBlock.SetValue("TriggerDelay", (float)idleDelay);
+			myTimerBlock.ApplyAction("OnOff_On");
+			myTimerBlock.ApplyAction("Start");
+
+			return;
+		}else{
+			if(myTimerBlock != null) myTimerBlock.ApplyAction("OnOff_Off");
+		}
 	}
 	
 	
@@ -73,7 +78,8 @@ void Main(string arg){
 		counter++;
 		if(counter >= numMissiles) counter = 0;
 		
-		if(state == SAMState.Idle){
+		//If I'm in the idle state and transitioning to active state, change timer duration.
+		if(state == SAMState.Idle && myTimerBlock != null){
 			myTimerBlock.SetValue("TriggerDelay", (float)fireDelay);
 			myTimerBlock.ApplyAction("OnOff_On");
 			myTimerBlock.ApplyAction("Start");
@@ -86,9 +92,9 @@ void Main(string arg){
 	}
 	
 	if(state == SAMState.Active){
-		//in active state, make sure timer is operating at fireDelay.
-		//also 
-		if(scriptTime > deactivateTimer){
+		//in active state, check to see if deactivation cooldown is up.
+		//If so, change states and change the timer duration.
+		if(scriptTime > deactivateTimer && myTimerBlock != null){
 			state = SAMState.Idle;
 				
 			myTimerBlock.SetValue("TriggerDelay", (float)idleDelay);
