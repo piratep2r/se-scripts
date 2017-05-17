@@ -1,0 +1,720 @@
+/ Note from Piratep2r: Author is Whiplash141, source is http://steamcommunity.com/sharedfiles/filedetails/?id=713653017&searchtext=Whip%27s
+
+/* 
+/// Whip's Artificial Horizon Script v11 /// - rev: 07/02/16 
+_______________________________________________________________________           
+///DESCRIPTION///   
+ 
+    I rewrote the majority of the dot matrix code. Script should now have less serverside impact 
+    and should be remarkably easier to modify. Also, I have gone through the trouble of trying 
+    to make my variables much more descriptive :) 
+     
+_______________________________________________________________________           
+///DESCRIPTION///   
+ 
+    This code creates an Artificial Horizon indicator that takes into account your pitch and roll. 
+    Also displayed on the screen is a vector indicator of velocity, speed display, and bearing display. 
+    The colors of the display grid are configurable in the code. 
+ 
+_______________________________________________________________________           
+///SETUP///   
+ 
+    1.) Make a program block and put this code in it 
+    2.) Make a timer with actions 
+        - "Trigger Now" itself 
+        - "Start" itself 
+        - "Run with default argument" the program from step 1 
+    3.) Start the timer 
+    4.) Find the control seat, cockpit, remote control, or passenger seat that you wish to  
+        use as your horizon reference and add the name tag "Forward" somewhere in its name 
+    5.) Find the Text Panel or LCD Panel that you want to display the Artificial Horizon on and add the tag 
+        "Horizon" somewhere in the name of the block 
+    6.) Fly around and enjoy :) 
+ 
+_______________________________________________________________________           
+///WHIP'S NOTES/// 
+ 
+    The code is a bit messy as I had to get creative with how I added strings together! 
+    If you notice any bugs, be sure to comment on the workshop page. 
+ 
+    Coded by Whiplash141 
+*/ 
+ 
+//------------------------------------------------- 
+//CONFIGURABLE VARAIABLES 
+//------------------------------------------------- 
+    const string controlSeatNameTag = "Forward"; 
+    const string readoutScreenNameTag = "Horizon"; 
+    const double maximumVelocity = 100; //supports up to 999 m/s max speed 
+    const int updatesPerSecond = 10; 
+    bool enableOrientationIndicator = true; //specifies if the orientation axes are drawn with the artificial horizon 
+ 
+//=================================================== 
+//------------------------------------------------- 
+//COLOR CONSTANTS: Do not change!!! 
+//Credit to alex-thatradarguy for finding these characters 
+//http://steamcommunity.com/sharedfiles/filedetails/?id=627416824 
+//------------------------------------------------- 
+    const string green = "\uE001"; //No touchey 
+    const string blue = "\uE002"; //No touchey 
+    const string red = "\uE003"; //No touchey 
+    const string yellow = "\uE004"; //No touchey 
+    const string white = "\uE006"; //No touchey 
+    const string lightGray = "\uE00E"; //No touchey 
+    const string mediumGray = "\uE00D"; //No touchey 
+    const string darkGray = "\uE00F"; //No touchey 
+//==================================================== 
+ 
+//------------------------------------------------- 
+//COLOR DEFAULTS: You can change these; see the above section for allowed colors 
+//------------------------------------------------- 
+    const string backgroundColor = darkGray; 
+    const string horizonLineColor = darkGray; 
+    const string belowHorizonColor = green; 
+    const string aboveHorizonColor = blue; 
+    const string textColor = red; 
+    const string numberColor = yellow; 
+    const string velocityIndicatorColor = yellow; 
+    const string spaceOrientationColor = lightGray; 
+    const string planetaryOrientationColor = red; 
+ 
+//--------------------------------------------------- 
+//DO NOT TOUCH ANYTHING BELOW THIS 
+//--------------------------------------------------- 
+    const int midpoint = 26; // this should be an even number, DO NOT TOUCH 
+    const int gridSize = midpoint * 2 - 1;  
+    const int planeSymbolWidth = 10; //measured from center to wingtip 
+     
+    int velocityRow = 0; 
+    int velocityColumn = 0; 
+ 
+    const double timeCycleMax = 1 / (double)updatesPerSecond; 
+    const double rad2deg = 180 / Math.PI; 
+    const double deg2rad = Math.PI / 180; 
+    const double velocityIncrement = maximumVelocity / (double)midpoint; 
+    const double pitchIncrement = 90 / (double)midpoint; 
+    double timeCurrentCycle = 0; 
+    double shipSpeed = 0; 
+    double rollAngle = 0; 
+    double pitchAngle = 0; 
+    double bearingAngle = 0; 
+ 
+    bool isUpsideDown = false; 
+    bool inGravity = false; 
+    bool isBackwards = false; 
+ 
+    string headingAndVelocityString = ""; 
+ 
+    Dictionary<Vector2I, string> characterGrid = new Dictionary<Vector2I, string>(); 
+ 
+    Vector3D absoluteNorthVec = new Vector3D(0, 0, 1); //my convention to consider +Z to be abs north :P 
+ 
+    IMyShipController reference = null; 
+ 
+void Main() 
+{ 
+    timeCurrentCycle += Runtime.TimeSinceLastRun.TotalSeconds; 
+    timeSymbol += Runtime.TimeSinceLastRun.TotalSeconds; 
+ 
+    if (timeCurrentCycle >= timeCycleMax) 
+    { 
+        Echo("WMI Artificial Horizon is online... " + RunningSymbol()); 
+ 
+        bool isProperlySetup = CheckBlocks(); 
+ 
+        if (isProperlySetup) 
+        { 
+            GetVelocity(); 
+            GetRollPitchAndHeading(); 
+            headingAndVelocityString = GetNumberPlacesString(shipSpeed, bearingAngle); 
+            DrawGrid(); 
+        } 
+ 
+        timeCurrentCycle = 0; 
+        characterGrid.Clear(); 
+    } 
+ 
+} 
+ 
+bool CheckBlocks() 
+{ 
+    var shipControllers = new List<IMyTerminalBlock>(); 
+    GridTerminalSystem.SearchBlocksOfName(controlSeatNameTag, shipControllers, isShipController); 
+    if (shipControllers.Count == 0) 
+    { 
+        Echo("Error: No ship controllers with name " + controlSeatNameTag + " detected"); 
+        return false; 
+    } 
+    else 
+    { 
+        reference = shipControllers[0] as IMyShipController; 
+        return true; 
+    } 
+} 
+ 
+void GetVelocity() //This method gets the relative position of the velocity vector on the screen 
+{ 
+    var velocityVec = reference.GetShipVelocities().LinearVelocity; 
+    var rightVelocity = VectorProjection(velocityVec, reference.WorldMatrix.Right).Length() * VectorCompareDirection(velocityVec, reference.WorldMatrix.Right); 
+    var upVelocity = VectorProjection(velocityVec, reference.WorldMatrix.Up).Length() * VectorCompareDirection(velocityVec, reference.WorldMatrix.Up); 
+    var forwardVelocity = VectorProjection(velocityVec, reference.WorldMatrix.Forward).Length() * VectorCompareDirection(velocityVec, reference.WorldMatrix.Forward); 
+    shipSpeed = velocityVec.Length(); //raw speed of ship 
+ 
+    if (rightVelocity < 0) 
+    { 
+        velocityColumn = midpoint - (int)Math.Round(-rightVelocity / velocityIncrement); 
+    } 
+    else 
+    { 
+        velocityColumn = midpoint + (int)Math.Round(rightVelocity / velocityIncrement); 
+    } 
+ 
+    if (upVelocity < 0) 
+    { 
+        velocityRow = midpoint + (int)Math.Round(-upVelocity / velocityIncrement); 
+    } 
+    else 
+    { 
+        velocityRow = midpoint - (int)Math.Round(upVelocity / velocityIncrement); 
+    } 
+ 
+    if (forwardVelocity < 0) 
+    { 
+        isBackwards = true; 
+    } 
+    else { 
+        isBackwards = false; 
+    } 
+ 
+    if (!isBackwards) //draws prograde velocity  
+    { 
+        /* 
+        Looks like: 
+            o o o 
+        o o o   o o o 
+            o o o 
+              o 
+              o 
+        */ 
+         
+        AddToGrid(new Vector2I(velocityRow + 1, velocityColumn), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 1, velocityColumn + 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 1, velocityColumn - 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 1, velocityColumn), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 1, velocityColumn + 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 1, velocityColumn - 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn + 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn - 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 2, velocityColumn), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 3, velocityColumn), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn + 2), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn + 3), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn - 2), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow, velocityColumn - 3), velocityIndicatorColor); 
+         
+    } 
+    else //draws retrograde velocity 
+    { 
+        /* 
+        Looks like: 
+           o       o 
+             o   o 
+               o 
+             o   o 
+           o       o 
+        */ 
+         
+        AddToGrid(new Vector2I(velocityRow, velocityColumn), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 1, velocityColumn + 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 1, velocityColumn - 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 1, velocityColumn + 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 1, velocityColumn - 1), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 2, velocityColumn + 2), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow - 2, velocityColumn - 2), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 2, velocityColumn + 2), velocityIndicatorColor); 
+        AddToGrid(new Vector2I(velocityRow + 2, velocityColumn - 2), velocityIndicatorColor); 
+    } 
+ 
+    Echo("Ship Velocity: " + Math.Round(shipSpeed, 2).ToString()); 
+} 
+ 
+void DrawOrientationIndicator() 
+{ 
+    if (!inGravity) 
+    { 
+        for (int j = 1; j <= gridSize; j++) 
+        { 
+            AddToGrid(new Vector2I(midpoint, j), spaceOrientationColor); //draws a horizontal line 
+        } 
+ 
+        for (int j = 1; j <= gridSize; j++) 
+        { 
+            AddToGrid(new Vector2I(j, midpoint), spaceOrientationColor); //draws a vertical line 
+        } 
+    } 
+    else //draws a nose orientation indicator that looks like  --- W --- 
+    { 
+        AddToGrid(new Vector2I(midpoint, midpoint), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint + 1, midpoint + 1), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint + 1, midpoint - 1), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint, midpoint - 2), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint, midpoint + 2), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint - 1, midpoint - 3), planetaryOrientationColor); 
+        AddToGrid(new Vector2I(midpoint - 1, midpoint + 3), planetaryOrientationColor); 
+         
+        for ( int j = midpoint - planeSymbolWidth; j < midpoint - 4; j++ ) 
+        { 
+            AddToGrid(new Vector2I(midpoint, j), planetaryOrientationColor); 
+        } 
+         
+        for ( int j = midpoint + 5 ; j <= midpoint + planeSymbolWidth; j++ ) 
+        { 
+            AddToGrid(new Vector2I(midpoint, j), planetaryOrientationColor); 
+        } 
+    } 
+} 
+ 
+void GetRollPitchAndHeading() 
+{ 
+    /// Get Needed Vectors /// 
+    Vector3D shipForwardVec = reference.WorldMatrix.Forward; 
+    Vector3D shipLeftVec = reference.WorldMatrix.Left; 
+    Vector3D shipDownVec = reference.WorldMatrix.Down; 
+    Vector3D gravityVec = reference.GetNaturalGravity(); 
+    Vector3D planetRelativeLeftVec = shipForwardVec.Cross(gravityVec); 
+ 
+    if (gravityVec.Length().ToString() == "NaN" || gravityVec.Length() == 0) 
+    { 
+        Echo("No natural gravity field detected"); 
+        inGravity = false; 
+        DrawOrientationIndicator(); 
+        return; 
+    } 
+    else 
+    { 
+        inGravity = true; 
+        if (enableOrientationIndicator) 
+        { 
+            DrawOrientationIndicator(); 
+        } 
+    } 
+ 
+    isUpsideDown = false; 
+ 
+    /// Compute Pitch and Roll /// 
+    if (!VectorIsSameDirection(shipDownVec, gravityVec)) 
+    { 
+        isUpsideDown = true; 
+    } 
+ 
+    rollAngle = VectorAngleBetween(shipLeftVec, planetRelativeLeftVec); 
+ 
+    rollAngle *= VectorCompareDirection(VectorProjection(shipLeftVec, gravityVec), gravityVec); //ccw is positive 
+ 
+    if (rollAngle > 90 || rollAngle < -90) 
+    { 
+        rollAngle = 180 - rollAngle; //accounts for upsidedown 
+    } 
+ 
+    pitchAngle = VectorAngleBetween(shipForwardVec, gravityVec); //angle from nose direction to gravity 
+    pitchAngle -= 90; //as 90 degrees is level with ground 
+ 
+    Echo("Roll angle: " + Math.Round(rollAngle, 2).ToString() + "\nPitch angle: " + Math.Round(pitchAngle, 2).ToString()); 
+    GetHorizonLine(); //gets horizon line 
+     
+    /// Compute Bearing /// 
+    //get east vector  
+    Vector3D relativeEastVec = gravityVec.Cross(absoluteNorthVec); 
+ 
+    //get relative north vector  
+    Vector3D relativeNorthVec = relativeEastVec.Cross(gravityVec); 
+ 
+    //project forward vector onto a plane comprised of the north and east vectors  
+    Vector3D forwardProjNorthVec = VectorProjection(shipForwardVec, relativeNorthVec); 
+    Vector3D forwardProjEastVec = VectorProjection(shipForwardVec, relativeEastVec); 
+    Vector3D forwardProjPlaneVec = forwardProjEastVec + forwardProjNorthVec; 
+ 
+    //find angle from abs north to projected forward vector measured clockwise  
+    bearingAngle = Math.Acos(forwardProjPlaneVec.Dot(relativeNorthVec) / forwardProjPlaneVec.Length() / relativeNorthVec.Length()) * rad2deg; 
+    if (VectorIsSameDirection(shipForwardVec, relativeEastVec) == false) 
+    { 
+        bearingAngle = 360 - bearingAngle; //because of how the angle is measured  
+    } 
+ 
+    Echo("Bearing: " + Math.Round(bearingAngle, 2).ToString()); 
+} 
+ 
+void GetHorizonLine() 
+{ 
+    int horizontalOffset = (int)Math.Round(pitchAngle / pitchIncrement * Math.Sin(rollAngle * deg2rad)); //offset of every point in the horizontal direction 
+    int verticalOffset = (int)Math.Round(pitchAngle / pitchIncrement * Math.Cos(rollAngle * deg2rad)); //offset of every point in the vertical direction 
+     
+    double constant = 1; 
+    if (isUpsideDown) 
+    { 
+        verticalOffset *= -1; 
+        constant = -1; 
+         
+    } 
+     
+    int adjustedMidpoint = midpoint - horizontalOffset; //offsets our midpoint horizontally due to pitch and roll 
+ 
+    for (int i = 1; i <= gridSize; i++) //rows 
+    { 
+        int thisHeight = 0; 
+ 
+        if (i < midpoint) 
+        { 
+            thisHeight = adjustedMidpoint - (int)Math.Round((adjustedMidpoint - i) * Math.Tan(constant * rollAngle * deg2rad)); 
+        } 
+        else 
+        { 
+            thisHeight = adjustedMidpoint + (int)Math.Round((i - adjustedMidpoint) * Math.Tan(constant * rollAngle * deg2rad)); 
+        } 
+ 
+        thisHeight += verticalOffset; //offset our computed height by this value 
+ 
+        AddToGrid(new Vector2I(thisHeight, i), horizonLineColor); 
+ 
+        string aboveColor = aboveHorizonColor; string belowColor = belowHorizonColor; 
+        if (isUpsideDown) 
+        { 
+            aboveColor = belowHorizonColor; belowColor = aboveHorizonColor; 
+        } 
+ 
+        for( int j = 1; j <= gridSize; j++ ) 
+        { 
+            if ( j < thisHeight ) 
+            { 
+                AddToGrid(new Vector2I(j, i), aboveColor); 
+            } 
+            else if( j > thisHeight ) 
+            { 
+                AddToGrid(new Vector2I(j, i), belowColor); 
+            } 
+        } 
+    } 
+} 
+ 
+void AddToGrid(Vector2I place, string color) 
+{ 
+    string value; 
+    bool exists = characterGrid.TryGetValue(place, out value); 
+    if (exists) 
+    { 
+        return; 
+    } 
+    else 
+    { 
+        characterGrid.Add(place, color); 
+    } 
+} 
+ 
+void DrawGrid() //draws graphical grid 
+{ 
+    string grid = "     "; //5 spaces to center 
+ 
+    for (int row = 1; row <= gridSize; row++) 
+    { 
+        for (int column = 1; column <= gridSize; column++) 
+        { 
+            string character = backgroundColor; 
+ 
+            Vector2I thisGridPosition = new Vector2I(row, column); 
+ 
+            string thisCharacter; 
+            bool containsPosition = characterGrid.TryGetValue(thisGridPosition, out thisCharacter); 
+            if (containsPosition) 
+            { 
+                character = thisCharacter; 
+            } 
+ 
+            grid += character; //adds our current character 
+        } 
+ 
+        if (row != gridSize) 
+            grid += "\n     "; 
+    } 
+ 
+    grid += "\n\n" + headingAndVelocityString; 
+ 
+    WriteToTextPanel(readoutScreenNameTag, grid); 
+} 
+ 
+ 
+string GetNumberPlacesString(double vel, double head) //gets a graphical string from velocity and heading 
+{ 
+    //Velocity Splitting 
+    double velHundreds = 0; double velTens = 0; double velOnes = 0; 
+    vel = Math.Round(vel); 
+    if (vel >= 100) 
+    { 
+        velHundreds = Math.Floor(vel / 100); 
+    } 
+    else { 
+        velHundreds = 0; 
+    } 
+ 
+    vel = vel - velHundreds * 100; 
+    if (vel >= 10) 
+    { 
+        velTens = Math.Floor(vel / 10); 
+    } 
+    else { 
+        velTens = 0; 
+    } 
+ 
+    velOnes = vel - velTens * 10; 
+ 
+    //Heading Splitting 
+    double headHundreds = 0; double headTens = 0; double headOnes = 0; 
+    head = Math.Round(head); 
+    if (head >= 100) 
+    { 
+        headHundreds = Math.Floor(head / 100); 
+    } 
+    else { 
+        headHundreds = 0; 
+    } 
+ 
+    head = head - headHundreds * 100; 
+    if (head >= 10) 
+    { 
+        headTens = Math.Floor(head / 10); 
+    } 
+    else { 
+        headTens = 0; 
+    } 
+ 
+    headOnes = head - headTens * 10; 
+ 
+    return CombineStringsByLine(numVelocity + GetStringFromNumber(velHundreds) + GetStringFromNumber(velTens) + GetStringFromNumber(velOnes) 
+        + numHeading + GetStringFromNumber(headHundreds) + GetStringFromNumber(headTens) + GetStringFromNumber(headOnes)); 
+} 
+ 
+string GetStringFromNumber(double num) //gets graphical representation from a double 
+{ 
+    string numString = ""; 
+ 
+    switch (num.ToString()) 
+    { 
+        case "0": 
+            numString = numZero; 
+            break; 
+ 
+        case "1": 
+            numString = numOne; 
+            break; 
+ 
+        case "2": 
+            numString = numTwo; 
+            break; 
+ 
+        case "3": 
+            numString = numThree; 
+            break; 
+ 
+        case "4": 
+            numString = numFour; 
+            break; 
+ 
+        case "5": 
+            numString = numFive; 
+            break; 
+ 
+        case "6": 
+            numString = numSix; 
+            break; 
+ 
+        case "7": 
+            numString = numSeven; 
+            break; 
+ 
+        case "8": 
+            numString = numEight; 
+            break; 
+ 
+        case "9": 
+            numString = numNine; 
+            break; 
+ 
+        default: 
+            numString = numZero; 
+            break; 
+    } 
+    return numString; 
+} 
+ 
+string CombineStringsByLine(string inputString) //messy way of combining our characters line by line 
+{ 
+    var stringLines = inputString.Split('\n'); 
+    string outputString = ""; 
+    for (int i = 0; i < 5; i++) 
+    { 
+        outputString += "  " + stringLines[i] + backgroundColor + stringLines[i + 5] + backgroundColor + stringLines[i + 10] + backgroundColor + stringLines[i + 15] 
+            + "     " //5 spaces 
+            + stringLines[i + 20] + backgroundColor + stringLines[i + 25] + backgroundColor + stringLines[i + 30] + backgroundColor + stringLines[i + 35] + "\n"; 
+    } 
+    return outputString; 
+} 
+ 
+void WriteToTextPanel(string textPanelName, string textToWrite) 
+{ 
+    var listScreens = new List<IMyTerminalBlock>(); 
+    GridTerminalSystem.SearchBlocksOfName(textPanelName, listScreens, isTextPanel); 
+    if (listScreens.Count == 0) 
+    { 
+        Echo("Error: No text panel with name tag '" + textPanelName + "' was found"); 
+        return; 
+    } 
+    else 
+    { 
+        for (int i = 0; i < listScreens.Count; i++) 
+        { 
+            var thisScreen = listScreens[i] as IMyTextPanel; 
+            if (thisScreen != null) 
+            { 
+                thisScreen.WritePublicText(textToWrite); 
+                thisScreen.ShowTextureOnScreen(); 
+                thisScreen.ShowPublicTextOnScreen(); 
+                thisScreen.SetValue("FontSize", 0.3f); //for large grid 
+            } 
+        } 
+    } 
+} 
+ 
+bool isTextPanel(IMyTerminalBlock block) 
+{ 
+    var testScreen = block as IMyTextPanel; 
+    return testScreen != null; 
+} 
+ 
+bool isShipController(IMyTerminalBlock block) 
+{ 
+    var testControl = block as IMyShipController; 
+    return testControl != null; 
+} 
+ 
+int VectorCompareDirection(Vector3D a, Vector3D b) //returns -1 if vectors return negative dot product 
+{ 
+    double check = a.Dot(b); 
+    if (check < 0) 
+        return -1; 
+    else 
+        return 1; 
+} 
+ 
+double VectorAngleBetween(Vector3D a, Vector3D b) //returns degrees  
+{ 
+    return Math.Acos(a.Dot(b) / a.Length() / b.Length()) * 180 / Math.PI; 
+} 
+ 
+Vector3D VectorProjection(Vector3D a, Vector3D b) //projects a onto b 
+{ 
+    Vector3D projection = a.Dot(b) / b.Length() / b.Length() * b; 
+    return projection; 
+} 
+ 
+bool VectorIsSameDirection(Vector3D a, Vector3D b) //returns true if vectors produce positive dot product 
+{ 
+    double check = a.Dot(b); 
+    if (check < 0) 
+        return false; 
+    else 
+        return true; 
+} 
+ 
+//Whip's Running Symbol Method v3 
+double timeSymbol = 0; 
+string strRunningSymbol = ""; 
+ 
+string RunningSymbol() //makes a cool spinning bar symbol :) 
+{ 
+    if (timeSymbol < .2d) 
+        strRunningSymbol = "|"; 
+    else if (timeSymbol < .4d) 
+        strRunningSymbol = "/"; 
+    else if (timeSymbol < .6d) 
+        strRunningSymbol = "--"; 
+    else if (timeSymbol < .8d) 
+        strRunningSymbol = "\\"; 
+    else 
+    { 
+        timeSymbol = 0; 
+        strRunningSymbol = "|"; 
+    } 
+ 
+    return strRunningSymbol; 
+} 
+ 
+const string numZero = numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numOne = backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n"; 
+ 
+const string numTwo = numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + backgroundColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numThree = numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + backgroundColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numFour = numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n"; 
+ 
+const string numFive = numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + backgroundColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numSix = numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + backgroundColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numSeven = numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n" 
+    + backgroundColor + numberColor + backgroundColor + "\n"; 
+ 
+const string numEight = numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n";                                                                                                                                                                                           //w.H.1.p.L.4.s.H 
+ 
+const string numNine = numberColor + numberColor + numberColor + "\n" 
+    + numberColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n" 
+    + backgroundColor + backgroundColor + numberColor + "\n" 
+    + numberColor + numberColor + numberColor + "\n"; 
+ 
+const string numHeading = textColor + backgroundColor + textColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + "\n" 
+    + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + backgroundColor + backgroundColor + backgroundColor + textColor + "\n" 
+    + textColor + textColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + "\n" 
+    + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + backgroundColor + textColor + backgroundColor + textColor + "\n" 
+    + textColor + backgroundColor + textColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + "\n"; 
+ 
+const string numVelocity = backgroundColor + textColor + textColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + "\n" 
+    + textColor + backgroundColor + backgroundColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + "\n" 
+    + textColor + textColor + textColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + backgroundColor + "\n" 
+    + backgroundColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + backgroundColor + backgroundColor + textColor + backgroundColor + textColor + backgroundColor + textColor + "\n" 
+    + textColor + textColor + backgroundColor + backgroundColor + textColor + backgroundColor + backgroundColor + backgroundColor + textColor + textColor + backgroundColor + backgroundColor + backgroundColor + "\n"; 
